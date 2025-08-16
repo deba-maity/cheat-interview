@@ -1,0 +1,24 @@
+{
+  "name": "stealth-overlay-app",
+  "version": "1.0.0",
+  "main": "main.js",
+  "dependencies": {
+    "dotenv": "^17.2.1",
+    "node-addon-api": "^5.1.0",
+    "openai": "^4.104.0"
+  },
+  "gypfile": true,
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "install": "node-gyp rebuild",
+    "start": "electron .",
+    "rebuild": "node-gyp rebuild"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "electron": "^37.3.0"
+  }
+}
