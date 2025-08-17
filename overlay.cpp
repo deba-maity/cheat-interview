@@ -1,7 +1,9 @@
+// overlay.cpp
 #include <napi.h>
 #include <windows.h>
 #include <string>
 #include <thread>
+#include <cstdio>
 
 #ifndef WDA_EXCLUDEFROMCAPTURE
 // Windows 10 2004+ flag that hides a window from screen capture
@@ -13,8 +15,14 @@ HWND hEditInput = NULL;
 HWND hStaticOutput = NULL;
 Napi::ThreadSafeFunction tsfn; // Node callback
 
+// We'll subclass the edit control so we can catch VK_RETURN
+WNDPROC oldEditProc = nullptr;
+
+// Forward declaration
+LRESULT CALLBACK EditProc(HWND hwndEdit, UINT msg, WPARAM wParam, LPARAM lParam);
+
 // Window procedure
-LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+LRESULT CALLBACK WindowProc(HWND hwndMain, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
         case WM_CREATE: {
             // Output (AI response)
@@ -24,7 +32,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 "AI will reply here...",
                 WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX,
                 10, 10, 660, 60,
-                hwnd,
+                hwndMain,
                 (HMENU)101,
                 GetModuleHandle(NULL),
                 NULL
@@ -37,43 +45,83 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 "",
                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
                 10, 80, 660, 25,
-                hwnd,
+                hwndMain,
                 (HMENU)102,
                 GetModuleHandle(NULL),
                 NULL
             );
+
+            // Subclass the edit control so we receive its keystrokes
+            oldEditProc = (WNDPROC)SetWindowLongPtrA(hEditInput, GWLP_WNDPROC, (LONG_PTR)EditProc);
 
             // Give focus to input
             SetFocus(hEditInput);
             break;
         }
 
-        case WM_KEYDOWN: {
-            // Press Enter inside input → send to Node
-            if (wParam == VK_RETURN && GetFocus() == hEditInput) {
-                char buffer[1024];
-                GetWindowTextA(hEditInput, buffer, sizeof(buffer));
-                std::string question(buffer);
-
-                // Clear after send
-                SetWindowTextA(hEditInput, "");
-
-                if (!question.empty() && tsfn) {
-                    tsfn.BlockingCall([question](Napi::Env env, Napi::Function cb) {
-                        cb.Call({ Napi::String::New(env, question) });
-                    });
-                }
-
-                return 0; // swallow Enter "ding"
-            }
-            break;
-        }
-
         case WM_DESTROY:
+            // Optional: restore original edit proc before exit
+            if (oldEditProc && hEditInput) {
+                SetWindowLongPtrA(hEditInput, GWLP_WNDPROC, (LONG_PTR)oldEditProc);
+                oldEditProc = nullptr;
+            }
             PostQuitMessage(0);
             break;
     }
-    return DefWindowProc(hwnd, uMsg, wParam, lParam);
+    return DefWindowProcA(hwndMain, uMsg, wParam, lParam);
+}
+
+// Subclass procedure for the EDIT control
+LRESULT CALLBACK EditProc(HWND hwndEdit, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (msg == WM_KEYDOWN) {
+        if (wParam == VK_RETURN) {
+            // Read current text
+            char buffer[1024] = {0};
+            GetWindowTextA(hwndEdit, buffer, (int)sizeof(buffer));
+            std::string question(buffer);
+
+            // Clear the edit control
+            SetWindowTextA(hwndEdit, "");
+
+            // Debug log to console (native)
+            printf("✅ EditProc: Enter pressed. Question: %s\n", question.c_str());
+            fflush(stdout);
+
+            // Send to Node via TSFN (safe pattern)
+            if (!question.empty() && tsfn) {
+                printf("✅ EditProc: Sending question to Node.\n");
+                fflush(stdout);
+
+                std::string* qCopy = new std::string(question);
+                napi_status status = tsfn.BlockingCall(qCopy, [](Napi::Env env, Napi::Function cb, std::string* data) {
+                    // Call the JS callback with the question string
+                    cb.Call({ Napi::String::New(env, *data) });
+                    delete data;
+                });
+
+                if (status != napi_ok) {
+                    printf("⚠️ EditProc: TSFN BlockingCall failed (status %d)\n", status);
+                    fflush(stdout);
+                }
+            } else {
+                if (question.empty()) {
+                    printf("🔔 EditProc: Ignored empty question.\n");
+                    fflush(stdout);
+                } else {
+                    printf("🔔 EditProc: TSFN not initialized.\n");
+                    fflush(stdout);
+                }
+            }
+
+            return 0; // swallow Enter
+        }
+    }
+
+    // Call original proc for default behavior
+    if (oldEditProc) {
+        return CallWindowProcA(oldEditProc, hwndEdit, msg, wParam, lParam);
+    }
+    return DefWindowProcA(hwndEdit, msg, wParam, lParam);
 }
 
 // Show answer in static output box
@@ -84,7 +132,14 @@ Napi::Value ShowAnswer(const Napi::CallbackInfo& info) {
     std::string answer = info[0].As<Napi::String>();
     if (hStaticOutput) {
         SetWindowTextA(hStaticOutput, answer.c_str());
+        // Force redraw
+        InvalidateRect(hStaticOutput, NULL, TRUE);
+        UpdateWindow(hStaticOutput);
     }
+
+    // Also log to native console for debugging
+    printf("✅ ShowAnswer called: %s\n", answer.c_str());
+    fflush(stdout);
 
     return env.Undefined();
 }
@@ -106,6 +161,9 @@ Napi::Value StartOverlay(const Napi::CallbackInfo& info) {
         0,   // unlimited queue
         1    // one thread will use this TSFN
     );
+
+    printf("✅ TSFN created\n");
+    fflush(stdout);
 
     // Run overlay window in its own thread so Node stays responsive
     std::thread([]() {
@@ -130,7 +188,11 @@ Napi::Value StartOverlay(const Napi::CallbackInfo& info) {
             NULL
         );
 
-        if (!hwnd) return;
+        if (!hwnd) {
+            printf("⚠️ CreateWindowExA failed\n");
+            fflush(stdout);
+            return;
+        }
 
         // Make semi-transparent (set to 255 for opaque)
         SetLayeredWindowAttributes(hwnd, 0, 230, LWA_ALPHA);
@@ -142,9 +204,9 @@ Napi::Value StartOverlay(const Napi::CallbackInfo& info) {
         UpdateWindow(hwnd);
 
         MSG msg;
-        while (GetMessage(&msg, NULL, 0, 0)) {
+        while (GetMessageA(&msg, NULL, 0, 0)) {
             TranslateMessage(&msg);
-            DispatchMessage(&msg);
+            DispatchMessageA(&msg);
         }
     }).detach();
 
