@@ -5,20 +5,21 @@
   "dependencies": {
     "dotenv": "^17.2.1",
     "node-addon-api": "^5.1.0",
-    "openai": "^4.104.0"
+    "openai": "^4.104.0",
+    "tesseract.js": "^6.0.1"
   },
   "gypfile": true,
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "install": "node-gyp rebuild",
+    "rebuild": "node-gyp rebuild",
     "start": "electron .",
-    "rebuild": "node-gyp rebuild"
+    "test": "node -e \"require('dotenv').config(); console.log('OPENAI_API_KEY present:', !!process.env.OPENAI_API_KEY)\""
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
   "devDependencies": {
     "electron": "^37.3.0"
-  }
+  },
+  "description": ""
 }
