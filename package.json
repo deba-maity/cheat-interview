@@ -15,13 +15,44 @@
     "install": "node-gyp rebuild",
     "rebuild": "node-gyp rebuild",
     "start": "electron .",
+    "build": "electron-builder",
+    "dist": "electron-builder",
     "test": "node -e \"require('dotenv').config(); console.log('OPENAI_API_KEY present:', !!process.env.OPENAI_API_KEY)\""
+  },
+  "build": {
+    "appId": "com.faks.stealthoverlay",
+    "productName": "Stealth Overlay",
+    "files": [
+      "main.js",
+      "package.json",
+      "node_modules/**",
+      "build/Release/overlay.node",
+      ".env"
+    ],
+"extraResources": [
+  {
+    "from": ".env",
+    "to": ".env"
+  },
+  {
+    "from": "build/Release/overlay.node",
+    "to": "overlay.node"
+  }
+],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "icon.ico"
+    }
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "electron": "^37.3.0"
+    "electron": "^37.3.0",
+    "electron-builder": "^26.0.12"
   },
   "description": ""
 }

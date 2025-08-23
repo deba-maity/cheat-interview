@@ -1,208 +1,5 @@
-// // overlay.cpp
-// #include <napi.h>
-// #include <windows.h>
-// #include <string>
-// #include <thread>
-// #include <cstdio>
+#define NOMINMAX
 
-// #ifndef WDA_EXCLUDEFROMCAPTURE
-// #define WDA_EXCLUDEFROMCAPTURE 0x11
-// #endif
-
-// HWND hwnd = NULL;
-// HWND hEditInput = NULL;
-// HWND hStaticOutput = NULL;
-// Napi::ThreadSafeFunction tsfn;
-
-// WNDPROC oldEditProc = nullptr;
-// LRESULT CALLBACK EditProc(HWND hwndEdit, UINT msg, WPARAM wParam, LPARAM lParam);
-
-// // Track colors for theme toggle
-// COLORREF bgColor = RGB(255, 255, 255); // default white
-// COLORREF textColor = RGB(0, 0, 0);
-
-// LRESULT CALLBACK WindowProc(HWND hwndMain, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-//     switch (uMsg) {
-//         case WM_CREATE: {
-//             hStaticOutput = CreateWindowExA(
-//                 0, "STATIC", "AI will reply here...",
-//                 WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX,
-//                 10, 10, 660, 60,
-//                 hwndMain, (HMENU)101, GetModuleHandle(NULL), NULL);
-
-//             hEditInput = CreateWindowExA(
-//                 WS_EX_CLIENTEDGE, "EDIT", "",
-//                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
-//                 10, 80, 660, 25,
-//                 hwndMain, (HMENU)102, GetModuleHandle(NULL), NULL);
-
-//             oldEditProc = (WNDPROC)SetWindowLongPtrA(hEditInput, GWLP_WNDPROC, (LONG_PTR)EditProc);
-
-//             SetFocus(hEditInput);
-//             break;
-//         }
-
-//         case WM_CTLCOLORSTATIC:
-//         case WM_CTLCOLOREDIT: {
-//             HDC hdc = (HDC)wParam;
-//             SetTextColor(hdc, textColor);
-//             SetBkColor(hdc, bgColor);
-//             static HBRUSH hBrush = CreateSolidBrush(bgColor);
-//             return (LRESULT)hBrush;
-//         }
-
-//         case WM_DESTROY:
-//             if (oldEditProc && hEditInput) {
-//                 SetWindowLongPtrA(hEditInput, GWLP_WNDPROC, (LONG_PTR)oldEditProc);
-//                 oldEditProc = nullptr;
-//             }
-//             PostQuitMessage(0);
-//             break;
-//     }
-//     return DefWindowProcA(hwndMain, uMsg, wParam, lParam);
-// }
-
-// LRESULT CALLBACK EditProc(HWND hwndEdit, UINT msg, WPARAM wParam, LPARAM lParam) {
-//     if (msg == WM_KEYDOWN && wParam == VK_RETURN) {
-//         char buffer[1024] = {0};
-//         GetWindowTextA(hwndEdit, buffer, (int)sizeof(buffer));
-//         std::string question(buffer);
-//         SetWindowTextA(hwndEdit, "");
-
-//         printf("✅ EditProc: Enter pressed. Question: %s\n", question.c_str());
-//         fflush(stdout);
-
-//         if (!question.empty() && tsfn) {
-//             std::string* qCopy = new std::string(question);
-//             napi_status status = tsfn.BlockingCall(qCopy, [](Napi::Env env, Napi::Function cb, std::string* data) {
-//                 cb.Call({ Napi::String::New(env, *data) });
-//                 delete data;
-//             });
-//             if (status != napi_ok) {
-//                 printf("⚠️ EditProc: TSFN BlockingCall failed (status %d)\n", status);
-//                 fflush(stdout);
-//             }
-//         }
-//         return 0;
-//     }
-//     return oldEditProc ? CallWindowProcA(oldEditProc, hwndEdit, msg, wParam, lParam) : DefWindowProcA(hwndEdit, msg, wParam, lParam);
-// }
-
-// // Exposed: show answer
-// Napi::Value ShowAnswer(const Napi::CallbackInfo& info) {
-//     Napi::Env env = info.Env();
-//     if (info.Length() < 1 || !info[0].IsString()) return env.Undefined();
-
-//     std::string answer = info[0].As<Napi::String>();
-//     if (hStaticOutput) {
-//         SetWindowTextA(hStaticOutput, answer.c_str());
-//         InvalidateRect(hStaticOutput, NULL, TRUE);
-//         UpdateWindow(hStaticOutput);
-//     }
-//     printf("✅ ShowAnswer called: %s\n", answer.c_str());
-//     fflush(stdout);
-
-//     return env.Undefined();
-// }
-
-// // Exposed: move overlay window
-// Napi::Value MoveWindowOverlay(const Napi::CallbackInfo& info) {
-//     Napi::Env env = info.Env();
-//     if (info.Length() < 2 || !info[0].IsNumber() || !info[1].IsNumber()) return env.Undefined();
-
-//     int x = info[0].As<Napi::Number>().Int32Value();
-//     int y = info[1].As<Napi::Number>().Int32Value();
-
-//     if (hwnd) {
-//         SetWindowPos(hwnd, HWND_TOPMOST, x, y, 700, 120, SWP_SHOWWINDOW);
-//         printf("✅ Overlay moved to (%d,%d)\n", x, y);
-//     }
-//     return env.Undefined();
-// }
-
-// // Exposed: toggle theme
-// Napi::Value ToggleTheme(const Napi::CallbackInfo& info) {
-//     Napi::Env env = info.Env();
-//     if (info.Length() < 1 || !info[0].IsBoolean()) return env.Undefined();
-
-//     bool dark = info[0].As<Napi::Boolean>();
-//     if (dark) {
-//         bgColor = RGB(30, 30, 30);
-//         textColor = RGB(255, 255, 255);
-//     } else {
-//         bgColor = RGB(255, 255, 255);
-//         textColor = RGB(0, 0, 0);
-//     }
-
-//     if (hStaticOutput) InvalidateRect(hStaticOutput, NULL, TRUE);
-//     if (hEditInput) InvalidateRect(hEditInput, NULL, TRUE);
-//     UpdateWindow(hwnd);
-
-//     printf("✅ Theme toggled: %s\n", dark ? "Dark" : "Light");
-//     fflush(stdout);
-//     return env.Undefined();
-// }
-
-// // Start overlay
-// Napi::Value StartOverlay(const Napi::CallbackInfo& info) {
-//     Napi::Env env = info.Env();
-//     if (info.Length() < 1 || !info[0].IsFunction()) {
-//         Napi::TypeError::New(env, "Callback function required").ThrowAsJavaScriptException();
-//         return env.Undefined();
-//     }
-
-//     tsfn = Napi::ThreadSafeFunction::New(env, info[0].As<Napi::Function>(),
-//                                          "OverlayQuestionCallback", 0, 1);
-
-//     std::thread([]() {
-//         const char CLASS_NAME[] = "StealthOverlayWindowClass";
-//         WNDCLASSA wc = {};
-//         wc.lpfnWndProc = WindowProc;
-//         wc.hInstance = GetModuleHandle(NULL);
-//         wc.lpszClassName = CLASS_NAME;
-//         wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
-//         RegisterClassA(&wc);
-
-//         hwnd = CreateWindowExA(WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
-//                                CLASS_NAME, "StealthOverlay", WS_POPUP,
-//                                50, 50, 2100, 360,
-//                                NULL, NULL, GetModuleHandle(NULL), NULL);
-
-//         if (!hwnd) {
-//             printf("⚠️ CreateWindowExA failed\n");
-//             fflush(stdout);
-//             return;
-//         }
-
-//         SetLayeredWindowAttributes(hwnd, 0, 230, LWA_ALPHA);
-//         SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
-
-//         ShowWindow(hwnd, SW_SHOW);
-//         UpdateWindow(hwnd);
-
-//         MSG msg;
-//         while (GetMessageA(&msg, NULL, 0, 0)) {
-//             TranslateMessage(&msg);
-//             DispatchMessageA(&msg);
-//         }
-//     }).detach();
-
-//     return env.Undefined();
-// }
-
-// // Init
-// Napi::Object Init(Napi::Env env, Napi::Object exports) {
-//     exports.Set("startOverlay", Napi::Function::New(env, StartOverlay));
-//     exports.Set("showAnswer", Napi::Function::New(env, ShowAnswer));
-//     exports.Set("moveWindow", Napi::Function::New(env, MoveWindowOverlay));
-//     exports.Set("toggleTheme", Napi::Function::New(env, ToggleTheme));
-//     return exports;
-// }
-
-// NODE_API_MODULE(overlay, Init)
-
-// overlay.cpp
-// #include <windows.h>
 #include <windowsx.h> // <-- this one gives you GET_X_LPARAM & GET_Y_LPARAM
 
 #include <napi.h>
@@ -210,6 +7,7 @@
 #include <string>
 #include <thread>
 #include <cstdio>
+#include <algorithm>  // for std::max
 
 #ifndef WDA_EXCLUDEFROMCAPTURE
 #define WDA_EXCLUDEFROMCAPTURE 0x11
@@ -245,7 +43,7 @@ LRESULT CALLBACK WindowProc(HWND hwndMain, UINT uMsg, WPARAM wParam, LPARAM lPar
             int outX = padding;
             int outY = padding;
             int outW = clientW - padding * 2;
-            int outH = max(60, clientH - inputH - padding * 3); // fill remaining space
+            int outH = std::max(60, clientH - inputH - padding * 3); // fill remaining space
 
             hStaticOutput = CreateWindowExA(
                 WS_EX_CLIENTEDGE,
@@ -308,8 +106,8 @@ LRESULT CALLBACK WindowProc(HWND hwndMain, UINT uMsg, WPARAM wParam, LPARAM lPar
             if (hStaticOutput && hEditInput) {
                 int outX = padding;
                 int outY = padding;
-                int outW = max(100, width  - padding * 2);
-                int outH = max(60,   height - inputH - padding * 3);
+                int outW = std::max(100, width  - padding * 2);
+                int outH = std::max(60,   height - inputH - padding * 3);
 
                 MoveWindow(hStaticOutput, outX, outY, outW, outH, TRUE);
 

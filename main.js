@@ -14,14 +14,27 @@ const Tesseract = require("tesseract.js");
 const record = require("node-record-lpcm16").record;
 const fs = require("fs");
 const path = require("path");
+const dotenv = require("dotenv");
 const overlay = require("./build/Release/overlay.node");
 const screenshot = require("screenshot-desktop"); // ✅ Fix: import screenshot
-
+const envPath = path.join(process.resourcesPath, ".env");
+dotenv.config({ path: envPath });
 let cornerIndex = 0;
 let darkMode = false;
 
 app.whenReady().then(() => {
+  // Hide dock/taskbar
+  if (process.platform === "darwin") {
+    app.dock.hide();
+  }
+
+  // Register all global shortcuts
   registerShortcuts();
+
+  // Prevent quitting when no BrowserWindow (keep overlay alive)
+  app.on("window-all-closed", (e) => {
+    e.preventDefault();
+  });
 });
 
 const openai = new OpenAI({
