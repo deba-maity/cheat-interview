@@ -8,6 +8,11 @@ yarn-error.log*
 
 # Environment variables
 .env
+.env.*
+!.env.example
+*.enc
+*.enc.tmp
+test-artifacts/
 
 # Build output
 dist/

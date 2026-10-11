@@ -1,39 +1,69 @@
-<!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="UTF-8" />
-    <title>Stealth Assistant</title>
-    <style>
-      body {
-        font-family: Arial, sans-serif;
-        background: #1e1e1e;
-        color: white;
-        margin: 0;
-        padding: 20px;
-      }
-      #output {
-        min-height: 300px; /* increased size */
-        border: 1px solid #555;
-        padding: 10px;
-        margin-bottom: 10px;
-        white-space: pre-wrap;
-        resize: both; /* make resizable */
-        overflow: auto; /* scrollbars if content too big */
-      }
-      #questionBox {
-        width: 100%;
-        padding: 8px;
-        font-size: 16px;
-        border: none;
-        outline: none;
-        background: #333;
-        color: white;
-      }
-    </style>
-  </head>
-  <body>
-    <div id="output">Ask me something...</div>
-    <input id="questionBox" placeholder="Type your question & hit Enter" />
-    <script src="renderer.js"></script>
-  </body>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Stealth Assistant</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="titlebar">
+    <span class="mark" aria-hidden="true">[·]</span><span class="brand">Stealth Assistant</span>
+    <span class="badge">MEETING & CODE</span><span class="spacer"></span>
+    <button class="link" id="settingsButton" title="Provider settings">Settings</button>
+    <button class="link" id="themeButton" title="Toggle theme · Ctrl+D" aria-label="Toggle theme">◐</button>
+    <button class="link" id="hideButton" title="Hide · Ctrl+Shift+H" aria-label="Hide window">—</button>
+    <button class="link" id="quitButton" title="Quit" aria-label="Quit app">×</button>
+  </header>
+  <section class="toolbar" aria-label="Assistant tools">
+    <label>Mode <select id="modeSelect"><option value="meeting">Meeting</option><option value="coding">Coding tutor</option></select></label>
+    <label id="languageLabel" hidden>Code <select id="languageSelect"><option>JavaScript</option><option>Python</option><option>Java</option><option>C++</option><option>TypeScript</option><option>Go</option></select></label>
+    <label>Audio <select id="audioSource"><option value="microphone">Microphone</option><option value="system">Meeting audio</option><option value="both">Both</option></select></label>
+    <label>Input <select id="micDevice" aria-label="Microphone"><option value="">Default microphone</option></select></label>
+    <div class="tool-row">
+      <button id="listenButton">● Listen <kbd>Ctrl L</kbd></button>
+      <button id="screenButton">Read screen <kbd>Ctrl I</kbd></button>
+      <select id="displaySelect" aria-label="Screen to capture"></select>
+      <label><input type="checkbox" id="autoAnswer" checked> Auto-answer questions</label>
+      <label><input type="checkbox" id="includeScreen"> Include screen</label>
+      <div class="input-meter"><span id="levelLabel">Input level</span><div class="meter-track"><div id="levelFill" class="meter-fill"></div></div></div>
+    </div>
+  </section>
+  <div id="statusRow" class="status-row" role="status" aria-live="polite"><span class="status-dot"></span><span id="statusText">Ready</span><button id="cancelButton" hidden>Cancel</button></div>
+  <main id="output" class="content" aria-label="Conversation">
+    <div id="welcome" class="welcome">
+      <span class="eyebrow">A LITTLE HELP, RIGHT HERE.</span>
+      <h1>Keep the conversation moving.</h1>
+      <p>Listen to a question, read what’s on your screen, or just ask. Choose meeting audio to hear the other speaker through your headphones.</p>
+      <div class="examples">
+        <button class="example" id="exampleMeeting">Explain something clearly.<small>Concise answers with conversation context.</small></button>
+        <button class="example" id="exampleCode">Work through a coding problem.<small>Approach, code, complexity, and edge cases.</small></button>
+      </div>
+      <p id="configurationHint">Open Settings to connect your AI providers.</p>
+    </div>
+  </main>
+  <footer class="composer">
+    <form id="questionForm" class="composer-row">
+      <textarea id="questionBox" rows="1" maxlength="24000" placeholder="Ask a question…" aria-label="Question"></textarea>
+      <button class="primary" id="sendButton" type="submit">Ask ↗</button>
+    </form>
+    <div class="composer-foot"><span><kbd>Enter</kbd> ask · <kbd>Shift Enter</kbd> new line</span><span class="optional">· <kbd>Esc</kbd> cancel · <kbd>Ctrl Shift H</kbd> show / hide</span><span class="spacer"></span><button class="link" id="clearButton">Clear conversation</button></div>
+  </footer>
+  <dialog id="settingsDialog" aria-labelledby="settingsTitle">
+    <div class="dialog-header"><h2 id="settingsTitle">Providers & fallbacks</h2><button class="link" id="closeSettings" aria-label="Close settings">×</button></div>
+    <div class="dialog-body">
+      <p>Use keys from your own provider accounts. Add multiple keys, separated by commas or new lines. Blank key fields keep existing keys. Keys are encrypted locally and never included in the app build.</p>
+      <p>Answers and transcription use the first compatible provider in your order. If a key, model, or provider fails, the app tries the next available option. Screen reading falls back to local OCR.</p>
+      <div class="settings-grid">
+        <label>Provider order<input id="providerOrder" placeholder="groq,gemini,openai,openrouter"></label>
+        <label>Timeout per attempt (seconds)<input id="timeoutSeconds" type="number" min="1" max="60"></label>
+      </div>
+      <div id="providerSettings"></div>
+      <p>Check connection sends a small test question using saved settings. Save new keys before checking.</p>
+    </div>
+    <div class="dialog-footer"><span id="settingsStatus" role="status"></span><button class="primary" id="saveSettings">Save settings</button></div>
+  </dialog>
+  <script src="audio-capture.js"></script><script src="renderer.js"></script>
+</body>
 </html>

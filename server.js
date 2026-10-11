@@ -1,42 +1,43 @@
-import express from "express";
-import fetch from "node-fetch";
-import dotenv from "dotenv";
-import cors from "cors";
+"use strict";
+const http=require("node:http");
+const path=require("node:path");
+const {timingSafeEqual}=require("node:crypto");
+require("dotenv").config({path:path.join(__dirname,".env"),quiet:true});
+const {AIService}=require("./lib/ai");
+const {fromEnvironment}=require("./lib/providers");
 
-dotenv.config();
-const app = express();
-app.use(express.json());
-app.use(cors());
-
-app.post("/api/ask", async (req, res) => {
-  const { question } = req.body;
-
-  try {
-    const response = await fetch(
-      "https://openrouter.ai/api/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "openai/gpt-4o-mini",
-          messages: [{ role: "user", content: question }],
-        }),
+function createServer({ai=new AIService(() => fromEnvironment()),token=process.env.LOCAL_API_TOKEN}={}) {
+  return http.createServer(async (req,res) => {
+    res.setHeader("Content-Type","application/json; charset=utf-8");
+    res.setHeader("Cache-Control","no-store");
+    const send=(status,body) => {if (res.writableEnded || res.destroyed) return;res.writeHead(status); res.end(JSON.stringify(body));};
+    if (req.method==="GET" && req.url==="/health") return send(200,{status:"ok"});
+    if (req.method!=="POST" || req.url!=="/api/ask") return send(404,{error:"Not found"});
+    if (!token) return send(503,{error:"Set LOCAL_API_TOKEN before using the local API."});
+    const supplied=Buffer.from(req.headers.authorization || "");
+    const expected=Buffer.from(`Bearer ${token}`);
+    if (supplied.length!==expected.length || !timingSafeEqual(supplied,expected)) return send(401,{error:"Unauthorized"});
+    const controller=new AbortController();
+    res.on("close",() => {if (!res.writableEnded) controller.abort();});
+    try {
+      let size=0;
+      const chunks=[];
+      for await (const chunk of req) {
+        size+=chunk.length;
+        if (size>65536) return send(413,{error:"Request too large"});
+        chunks.push(chunk);
       }
-    );
-
-    const data = await response.json();
-    console.log("OpenRouter response:", data);
-
-    const answer =
-      data?.choices?.[0]?.message?.content || "No response from AI";
-    res.json({ answer });
-  } catch (err) {
-    console.error("Error:", err);
-    res.status(500).json({ error: "Something went wrong" });
-  }
-});
-
-app.listen(3001, () => console.log("Backend running on http://localhost:3001"));
+      let body;
+      try {body=JSON.parse(Buffer.concat(chunks).toString("utf8"));}
+      catch {return send(400,{error:"Invalid JSON"});}
+      const answer=await ai.answer(body.question,{mode:body.mode,language:body.language,signal:controller.signal});
+      send(200,answer);
+    } catch (error) {
+      send(error.code==="INVALID_INPUT"?400:502,{error:error.message,code:error.code || "API_ERROR"});
+    }
+  });
+}
+if (require.main===module) {
+  createServer().listen(Number(process.env.PORT) || 3001,"127.0.0.1",() => console.log("Local API: http://127.0.0.1:3001"));
+}
+module.exports={createServer};

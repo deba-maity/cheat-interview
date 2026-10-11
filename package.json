@@ -4,55 +4,71 @@
   "main": "main.js",
   "dependencies": {
     "dotenv": "^17.2.1",
-    "node-addon-api": "^5.1.0",
-    "node-record-lpcm16": "^1.0.1",
-    "openai": "^4.104.0",
-    "screenshot-desktop": "^1.15.2",
     "tesseract.js": "^6.0.1"
   },
-  "gypfile": true,
+  "gypfile": false,
   "scripts": {
-    "install": "node-gyp rebuild",
-    "rebuild": "node-gyp rebuild",
     "start": "electron .",
+    "server": "node server.js",
+    "test": "node --test test/*.test.js",
+    "test:ui": "node scripts/smoke-test.js",
+    "test:ocr": "node scripts/check-ocr.js",
     "build": "electron-builder",
     "dist": "electron-builder",
-    "test": "node -e \"require('dotenv').config(); console.log('OPENAI_API_KEY present:', !!process.env.OPENAI_API_KEY)\""
+    "rebuild:native": "npx node-gyp rebuild",
+    "test:package": "node scripts/check-package.js"
   },
   "build": {
     "appId": "com.faks.stealthoverlay",
     "productName": "Stealth Overlay",
     "files": [
       "main.js",
+      "preload.js",
+      "renderer.js",
+      "audio-capture.js",
+      "index.html",
+      "styles.css",
+      "lib/**",
+      "assets/**",
       "package.json",
       "node_modules/**",
-      "build/Release/overlay.node",
-      ".env"
+      "!.env",
+      "!.env.*",
+      "!**/*.enc"
     ],
-"extraResources": [
-  {
-    "from": ".env",
-    "to": ".env"
-  },
-  {
-    "from": "build/Release/overlay.node",
-    "to": "overlay.node"
-  }
-],
+    "extraResources": [
+      {
+        "from": "eng.traineddata",
+        "to": "lang/eng.traineddata"
+      }
+    ],
     "directories": {
       "output": "dist"
     },
     "win": {
       "target": "nsis",
-      "icon": "icon.ico"
-    }
+      "icon": "assets/icon.ico"
+    },
+    "asarUnpack": [
+      "node_modules/**"
+    ],
+    "npmRebuild": false
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "electron": "^37.3.0",
+    "electron": "^44.7.0",
     "electron-builder": "^26.0.12"
   },
-  "description": ""
+  "description": "Desktop meeting and coding assistant with speech, screen reading, and multi-provider failover.",
+  "optionalDependencies": {
+    "node-addon-api": "^5.1.0"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "overrides": {
+    "@electron/get": "^5.1.0"
+  }
 }

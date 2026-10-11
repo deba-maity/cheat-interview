@@ -4,8 +4,7 @@
       "target_name": "overlay",
       "sources": [ "overlay.cpp" ],
 "include_dirs": [
-  "C:\\Users\\Dmaity\\stealth-assistant\\node_modules\\node-addon-api",
-  "C:\\Users\\Dmaity\\AppData\\Local\\node-gyp\\Cache\\20.13.1\\include\\node"
+  "<!@(node -p \"require('node-addon-api').include\")"
 ],
 
       "dependencies": [
