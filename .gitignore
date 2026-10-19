@@ -16,5 +16,6 @@ test-artifacts/
 
 # Build output
 dist/
+/Stealth Overlay.exe
 build/
 .next/

@@ -8,13 +8,15 @@
   },
   "gypfile": false,
   "scripts": {
+    "preinstall": "node scripts/check-node.js",
+    "prestart": "node scripts/check-node.js",
     "start": "electron .",
     "server": "node server.js",
     "test": "node --test test/*.test.js",
     "test:ui": "node scripts/smoke-test.js",
     "test:ocr": "node scripts/check-ocr.js",
-    "build": "electron-builder",
-    "dist": "electron-builder",
+    "build": "node scripts/build-windows.js",
+    "dist": "node scripts/build-windows.js",
     "rebuild:native": "npx node-gyp rebuild",
     "test:package": "node scripts/check-package.js"
   },
@@ -46,8 +48,12 @@
       "output": "dist"
     },
     "win": {
-      "target": "nsis",
+      "target": ["nsis", "portable"],
       "icon": "assets/icon.ico"
+    },
+    "portable": {
+      "artifactName": "Stealth Overlay.exe",
+      "requestExecutionLevel": "user"
     },
     "asarUnpack": [
       "node_modules/**"
