@@ -27,6 +27,9 @@ class AudioCapture {
             system.getTracks().forEach(track => track.stop());
             throw new Error("The selected display did not provide system audio.");
           }
+          // Meeting mode only consumes audio. Do not keep capturing desktop
+          // frames throughout the call just to satisfy getDisplayMedia setup.
+          system.getTracks().filter(track => track.kind==="video").forEach(track => track.stop());
           streams.push(system);
         } catch (error) {
           if (source==="system") throw new Error("Meeting audio could not be captured. On Windows, check that the meeting is playing sound. Try Microphone or Both as an alternative.");
@@ -48,7 +51,7 @@ class AudioCapture {
       if (generation!==this.generation) {streams.forEach(s => s.getTracks().forEach(t => t.stop())); return;}
       this.streams=streams;
       const AudioContextClass=window.AudioContext || window.webkitAudioContext;
-      const context=new AudioContextClass();
+      const context=new AudioContextClass({sampleRate:16000,latencyHint:"playback"});
       this.context=context;
       await context.resume();
       if (generation!==this.generation) {
@@ -59,7 +62,7 @@ class AudioCapture {
       }
       this.destination=this.context.createMediaStreamDestination();
       this.analyser=this.context.createAnalyser();
-      this.analyser.fftSize=2048;
+      this.analyser.fftSize=512;
       this.samples=new Float32Array(this.analyser.fftSize);
       this.sources=streams.map(stream => {
         const input=this.context.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));
@@ -74,7 +77,7 @@ class AudioCapture {
       this.mimeType=supported.find(type => MediaRecorder.isTypeSupported(type)) || "";
       this.phase="listening"; this.onState?.("listening");
       this.startClip();
-      this.timer=setInterval(() => this.monitor(),50);
+      this.timer=setInterval(() => this.monitor(),150);
     } catch (error) {
       streams.forEach(s => s.getTracks().forEach(t => t.stop()));
       if (generation===this.generation) {
@@ -88,7 +91,7 @@ class AudioCapture {
     this.clipStarted=performance.now();
     this.lastSpeech=0;this.speechMs=0;this.lastTick=this.clipStarted;
     this.chunks=[];this.discardCurrent=false;
-    const recorder=new MediaRecorder(this.destination.stream,this.mimeType?{mimeType:this.mimeType,audioBitsPerSecond:64000}:{});
+    const recorder=new MediaRecorder(this.destination.stream,this.mimeType?{mimeType:this.mimeType,audioBitsPerSecond:24000}:{});
     this.recorder=recorder;
     recorder.ondataavailable=event => {if (event.data.size) this.chunks.push(event.data);};
     recorder.onerror=() => {this.onError?.("Audio encoder failed. Stop and select another input device.");this.stop(true);};
@@ -100,16 +103,20 @@ class AudioCapture {
       else {this.release();this.phase="idle";this.onState?.("idle");}
       if (valid) this.onClip?.(blob);
     };
-    recorder.start(250);
+    // A clip is capped at 28 seconds; collect one encoded blob instead of
+    // allocating new chunks and dispatching events four times every second.
+    recorder.start();
   }
 
   monitor() {
     if (this.phase!=="listening" || !this.analyser) return;
     this.analyser.getFloatTimeDomainData(this.samples);
-    const rms=Math.sqrt(this.samples.reduce((total,x) => total+x*x,0)/this.samples.length);
+    let total=0;
+    for (let i=0;i<this.samples.length;i++) total+=this.samples[i]*this.samples[i];
+    const rms=Math.sqrt(total/this.samples.length);
     this.onLevel?.(Math.min(1,rms*8));
     const now=performance.now();
-    if (rms>.009) {this.lastSpeech=now;this.speechMs+=Math.min(100,now-this.lastTick);}
+    if (rms>.009) {this.lastSpeech=now;this.speechMs+=Math.min(250,now-this.lastTick);}
     this.lastTick=now;
     const silence=this.lastSpeech && now-this.lastSpeech>1200 && this.speechMs>=250;
     if ((silence || now-this.clipStarted>=28000) && this.recorder?.state==="recording") this.recorder.stop();

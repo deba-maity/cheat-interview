@@ -7,7 +7,7 @@ const asar=require("@electron/asar");
 const directory=path.join(__dirname,"..","dist","win-unpacked");
 const archive=path.join(directory,"resources","app.asar");
 const files=asar.listPackage(archive).map(name => name.replace(/\\/g,"/"));
-for (const name of ["main.js","preload.js","renderer.js","audio-capture.js","index.html","styles.css","lib/ai.js","lib/config.js","assets/app-icon.png"]) {
+for (const name of ["main.js","preload.js","renderer.js","audio-capture.js","index.html","styles.css","lib/ai.js","lib/config.js","lib/key-source.js","lib/ocr-cache.js","assets/app-icon.png"]) {
   assert.ok(files.includes(`/${name}`),`Missing packaged file: ${name}`);
 }
 assert.ok(!files.some(name => /(^|\/)\.env($|\.)|\.enc$/.test(name)),"Secrets must not be bundled");

@@ -27,6 +27,7 @@
       <select id="displaySelect" aria-label="Screen to capture"></select>
       <label><input type="checkbox" id="autoAnswer" checked> Auto-answer questions</label>
       <label><input type="checkbox" id="includeScreen"> Include screen</label>
+      <label><input type="checkbox" id="detailedScreen"> Detailed screen</label>
       <div class="input-meter"><span id="levelLabel">Input level</span><div class="meter-track"><div id="levelFill" class="meter-fill"></div></div></div>
     </div>
   </section>
@@ -53,8 +54,10 @@
   <dialog id="settingsDialog" aria-labelledby="settingsTitle">
     <div class="dialog-header"><h2 id="settingsTitle">Providers & fallbacks</h2><button class="link" id="closeSettings" aria-label="Close settings">×</button></div>
     <div class="dialog-body">
-      <p>Use keys from your own provider accounts. Add multiple keys, separated by commas or new lines. Blank key fields keep existing keys. Keys are encrypted locally and never included in the app build.</p>
-      <p>Answers and transcription use the first compatible provider in your order. If a key, model, or provider fails, the app tries the next available option. Screen reading falls back to local OCR.</p>
+      <p>Connect once on this computer: choose <strong>Get API key</strong>, sign into your provider account, create a key, paste it below, and Save settings. Groq supports both answers and listening. A copied app does not carry another computer's saved keys.</p>
+      <p>The app reloads your saved keys at launch. You can also keep your own <code>.env</code> beside the portable executable; it is read at every launch and overrides saved keys for the matching provider. It is not included in the build. New keys must be created in your account; the app cannot generate them.</p>
+      <button id="reloadKeys" type="button">Reload keys from .env</button>
+      <p>Lightweight screen capture is the default. Enable Detailed screen only for small text; local OCR is loaded on demand and released after 15 seconds idle. Hide, minimize, or lock the computer to stop capture and pending work.</p>
       <div class="settings-grid">
         <label>Provider order<input id="providerOrder" placeholder="groq,gemini,openai,openrouter"></label>
         <label>Timeout per attempt (seconds)<input id="timeoutSeconds" type="number" min="1" max="60"></label>

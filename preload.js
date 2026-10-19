@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld("electronAPI",{
   transcribe:payload => ipcRenderer.invoke("transcribe-audio",payload),
   answerScreen:payload => ipcRenderer.invoke("screen-answer",payload),
   getSettings:() => ipcRenderer.invoke("get-settings"),
+  reloadKeys:() => ipcRenderer.invoke("reload-keys"),
+  openKeyPage:provider => ipcRenderer.invoke("open-key-page",{provider}),
   saveSettings:payload => ipcRenderer.invoke("save-settings",payload),
   checkProvider:provider => ipcRenderer.invoke("check-provider",{provider}),
   cancelRequest:id => ipcRenderer.invoke("cancel-request",{id}),

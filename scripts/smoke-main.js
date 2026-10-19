@@ -1,5 +1,5 @@
 "use strict";
-const {app,desktopCapturer,nativeImage,screen}=require("electron");
+const {app,desktopCapturer,nativeImage,screen,shell}=require("electron");
 const assert=require("node:assert/strict");
 const fs=require("node:fs");
 const path=require("node:path");
@@ -15,6 +15,7 @@ for (const provider of ["GROQ","OPENAI","GEMINI","OPENROUTER"]) {
 process.env.GROQ_API_KEY="test-only-ui-key";
 let window;
 const errors=[],calls=[],chatBodies=[];
+const openedPages=[];shell.openExternal=async url=>{openedPages.push(url);};
 globalThis.fetch=async (url,req) => {
   calls.push(url);
   if (url.endsWith("audio/transcriptions")) {
@@ -46,6 +47,7 @@ app.whenReady().then(async () => {
     await until("Boolean(window.electronAPI && document.getElementById('configurationHint')?.textContent.includes('configured'))");
     assert.equal(await exec("typeof window.electronAPI.ipc"),"undefined","Raw IPC must not be exposed");
     assert.equal(window.isContentProtected(),true,"Screen capture protection must be enabled");
+    assert.equal(window.webContents.getBackgroundThrottling(),true);
     await exec("document.getElementById('questionBox').value='What is a promise?';document.getElementById('questionForm').requestSubmit()");
     await until("document.querySelectorAll('.message.assistant').length===1");
     assert.equal(await exec("document.querySelectorAll('.message pre code').length"),1);
@@ -55,6 +57,11 @@ app.whenReady().then(async () => {
     await exec("document.getElementById('settingsButton').click()");
     await until("document.getElementById('settingsDialog').open");
     assert.equal(await exec("document.querySelectorAll('.provider-card').length"),4);
+    assert.equal(await exec("document.querySelectorAll('.get-key').length"),4);
+    await exec("document.querySelector('.get-key').click()");
+    await until("document.querySelectorAll('.get-key').length===4");
+    assert.deepEqual(openedPages,["https://console.groq.com/keys"]);
+    assert.equal((await exec("window.electronAPI.openKeyPage('https://untrusted.example')")).ok,false);
     await exec("document.getElementById('groq-keys').value='replacement-test-key';document.getElementById('saveSettings').click()");
     await until("!document.getElementById('settingsDialog').open");
     assert.equal(fs.readFileSync(path.join(directory,"provider-settings.enc")).includes(Buffer.from("replacement-test-key")),false);
@@ -86,12 +93,35 @@ app.whenReady().then(async () => {
     await until("!document.getElementById('sendButton').disabled");
     assert.match(await exec("document.getElementById('statusText').textContent"),/Cancelled/);
     assert.equal(await exec("document.querySelectorAll('.message.assistant').length"),4);
+    // Update a fake, test-profile key file while the app is open; no real
+    // profile or project .env is read or changed by this smoke test.
+    fs.writeFileSync(path.join(directory,".env"),"GROQ_API_KEY=fresh-file-test-key\n");
+    const refreshed=await exec("window.electronAPI.reloadKeys()");
+    assert.equal(refreshed.settings.providers.groq.keySource,"file");
+    assert.ok(!JSON.stringify(refreshed).includes("fresh-file-test-key"));
+    await exec("document.getElementById('settingsButton').click()");
+    await until("document.getElementById('settingsDialog').open");
+    assert.equal(await exec("document.getElementById('groq-keys').disabled"),true);
+    await exec("document.getElementById('closeSettings').click()");
+    fs.rmSync(path.join(directory,".env"));
+    await exec("window.electronAPI.reloadKeys()");
+    // Long conversations cannot retain an unlimited DOM tree.
+    await exec("for(let i=0;i<75;i++) message('transcript','Synthetic retained transcript '+i)");
+    assert.equal(await exec("document.getElementById('output').children.length"),60);
+    await exec("window.electronAPI.saveSettings({providers:{groq:{clearKeys:true},gemini:{clearKeys:true}}})");
+    const callsBeforeSetup=calls.length;
+    window.webContents.send("app-action","refresh-keys");
+    await until("document.getElementById('settingsDialog').open");
+    assert.equal(await exec("document.querySelector('.provider-head small').textContent"),"0 key(s) loaded");
+    assert.equal(await exec("document.querySelector('.provider-head button:not(.get-key)').disabled"),true);
+    assert.equal(calls.length,callsBeforeSetup,"Missing-key setup must not send provider requests");
+    await exec("document.getElementById('closeSettings').click()");
     await wait(300);
     const screenshot=await window.webContents.capturePage(undefined,{stayHidden:true,stayAwake:true});
     const artifacts=path.join(__dirname,"..","test-artifacts");fs.mkdirSync(artifacts,{recursive:true});
     fs.writeFileSync(path.join(artifacts,"assistant-ui.png"),screenshot.toPNG());
     assert.deepEqual(errors,[],"Renderer should not log script or CSP errors");
-    console.log("UI smoke test passed: actual main/preload IPC, capture protection, safe code rendering, encrypted settings, theme, synthetic microphone, transcription/context/auto-answer, vision, real offline OCR fallback, coding mode and cancellation.");
+    console.log("UI smoke test passed: main/preload IPC, background throttling, safe rendering, encrypted settings, official key links, local key reload, missing-key setup, bounded conversation, synthetic microphone, transcription/context/auto-answer, vision, real OCR and cancellation.");
     clearTimeout(guard);app.exit(0);
   } catch (error) {console.error(error.stack);console.error("Renderer errors:",errors);clearTimeout(guard);app.exit(1);}
 });

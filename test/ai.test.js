@@ -15,6 +15,15 @@ test("missing keys do not crash startup and explain the required setup",async ()
   const ai=setup({},() => {throw Error("Must not call network");});
   await assert.rejects(ai.answer("Hello"),e => e.code==="NOT_CONFIGURED" && /Settings/.test(e.message));
 });
+
+test("cooling credentials report a safe failure reason and retry time without repeated network requests",async()=>{
+  let calls=0;
+  const ai=setup({GROQ_API_KEY:"secret-key"},async()=>{calls++;return fail(401);});
+  await assert.rejects(ai.answer("First"));
+  await assert.rejects(ai.answer("Again"),/Key rejected or access denied; retry in \d+s/);
+  assert.equal(calls,1);assert.equal(ai.health().groq.status,"error");assert.ok(!JSON.stringify(ai.health()).includes("secret-key"));
+  ai.resetHealth();assert.deepEqual(ai.health(),{});
+});
 test("uses provider-specific endpoints and never sends a Groq key to OpenRouter",async () => {
   const calls=[];
   const ai=setup({GROQ_API_KEY:"groq-test",OPENROUTER_API_KEY:"router-test"},async (url,req) => {

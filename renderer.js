@@ -2,7 +2,7 @@
 const api=window.electronAPI;
 const $=id => document.getElementById(id);
 const state={history:[],busy:false,activeId:null,audioIds:new Set(),audioQueue:Promise.resolve(),pendingClips:0,
-  lastTranscript:"",transcriptContext:[],generation:0,settings:null,listenNotice:"",errorMessage:""};
+  lastTranscript:"",transcriptContext:[],generation:0,settings:null,health:{},listenNotice:"",errorMessage:""};
 const requestId=() => crypto.randomUUID();
 
 function status(message,error=false,busy=state.busy) {
@@ -68,7 +68,9 @@ function message(type,text,meta={}) {
     for (const a of meta.attempts) {const li=document.createElement("li");li.textContent=`${a.provider} / ${a.model}: ${a.reason}`;list.append(li);}
     details.append(summary,list);card.append(details);
   }
-  $("output").append(card);$("output").scrollTop=$("output").scrollHeight;
+  $("output").append(card);
+  while ($("output").children.length>60) $("output").firstElementChild.remove();
+  $("output").scrollTop=$("output").scrollHeight;
 }
 function remember(question,answer) {
   state.history.push({role:"user",content:question},{role:"assistant",content:answer});
@@ -79,17 +81,20 @@ function options() {return {history:state.history,mode:$("modeSelect").value,lan
 async function askQuestion(question,screen=false) {
   question=String(question || "").trim();
   if (!question || state.busy) return false;
+  if (!state.settings?.order.some(id=>state.settings.providers[id]?.keyCount)) {
+    status("Connect a provider once in Settings. Get API key opens your provider account.",true);openSettings();return false;
+  }
   const id=requestId();state.activeId=id;setBusy(true);
   const generation=state.generation;
   const opts=options();
   message("user",screen?`${question}\n[Reading selected screen]`:question);
   status(screen?"Capturing the selected display…":"Thinking…");
   try {
-    const payload={id,question,...opts,displayId:$("displaySelect").value};
+    const payload={id,question,...opts,displayId:$("displaySelect").value,detailedScreen:$("detailedScreen").checked};
     const result=await (screen?api.answerScreen(payload):api.askAI(payload));
     if (generation!==state.generation) return false;
     if (!result.ok) {
-      if (result.code!=="CANCELLED") {message("error",result.error,result);status(result.error,true);}
+      if (result.code!=="CANCELLED") {message("error",result.error,result);status(result.error,true);if(result.code==="NOT_CONFIGURED")openSettings();}
       return false;
     }
     message("assistant",result.answer,result);remember(question,result.answer);idleStatus();return true;
@@ -136,7 +141,10 @@ function queueClip(blob) {
 }
 const capture=new window.AudioCapture({
   onClip:queueClip,
-  onLevel:level => {$("levelFill").style.width=`${Math.round(level*100)}%`;},
+  onLevel:level => {
+    const value=String(Math.round(level*100));
+    if($("levelFill").dataset.level!==value){$("levelFill").dataset.level=value;$("levelFill").style.transform=`scaleX(${value/100})`;}
+  },
   onState:phase => {
     $("listenButton").classList.toggle("recording",phase==="listening");
     $("listenButton").textContent=phase==="listening"?"■ Stop listening":phase==="starting"?"Opening audio…":phase==="stopping"?"Stopping…":"● Listen · Ctrl L";
@@ -175,6 +183,7 @@ async function refreshSettings() {
   const result=await api.getSettings();
   if (!result.ok) {status(result.error,true);return;}
   state.settings=result.settings;
+  state.health=result.health || {};
   const selected=$("displaySelect").value;
   $("displaySelect").replaceChildren();
   result.displays.forEach(d => $("displaySelect").add(new Option(d.label,d.id)));
@@ -195,29 +204,35 @@ async function openSettings() {
   if ($("settingsDialog").open) return;
   await refreshSettings();
   if (!state.settings) return;
+  if ($("settingsDialog").open) return;
   $("providerOrder").value=state.settings.order.join(",");
   $("timeoutSeconds").value=state.settings.timeoutMs/1000;
-  $("settingsStatus").textContent=state.settings.encryptedStorage?"Encrypted local storage is available.":"Use .env: encrypted local storage is unavailable.";
+  $("settingsStatus").textContent=state.settings.keyFileError || (state.settings.keyFileLoaded?"Local .env loaded. Its keys override saved keys for the matching provider.":state.settings.encryptedStorage?"Paste your own key once; it will be saved securely on this computer.":"Use a local .env beside the executable; encrypted storage is unavailable.");
   $("providerSettings").replaceChildren();
   for (const [id,p] of Object.entries(state.settings.providers)) {
     const card=document.createElement("section");card.className="provider-card";
     const head=document.createElement("div");head.className="provider-head";
     const title=document.createElement("strong");title.textContent=p.label;
-    const count=document.createElement("small");count.textContent=`${p.keyCount} key(s) configured`;
+    const count=document.createElement("small");count.textContent=`${p.keyCount} key(s) loaded${p.keyCount?` · ${p.keySource}`:""}`;
+    const getKey=document.createElement("button");getKey.textContent="Get API key ↗";getKey.type="button";getKey.className="get-key";
+    getKey.addEventListener("click",async()=>{const result=await api.openKeyPage(id);if(!result.ok)$("settingsStatus").textContent=result.error;});
     const check=document.createElement("button");check.textContent="Check connection";check.type="button";
     const checkResult=document.createElement("div");checkResult.className="provider-check";
+    if(state.health[id])checkResult.textContent=state.health[id].reason;
+    check.disabled=!p.keyCount;
     check.addEventListener("click",async () => {
       check.disabled=true;checkResult.textContent="Checking saved configuration…";
       try {const result=await api.checkProvider(id);checkResult.textContent=result.ok?`Connected · ${result.model}${result.usedFallback?" (fallback)":""}`:result.error;}
       finally {check.disabled=false;}
     });
-    head.append(title,count,check);card.append(head);
-    card.append(inputField("Replace keys (comma-separated; leave blank to keep current keys)",`${id}-keys`,"","password"));
+    head.append(title,count,getKey,check);card.append(head);
+    card.append(inputField(p.keySource==="file"?"Keys loaded from .env — edit that file, then Reload keys":"API key (leave blank to keep the saved key)",`${id}-keys`,"","password"));
+    card.querySelector(`#${id}-keys`).disabled=p.keySource==="file";
     const clear=document.createElement("button");clear.type="button";clear.className="link danger";clear.textContent="Clear saved keys";
     clear.addEventListener("click",() => {
       const field=$(`${id}-keys`);field.value="";field.dataset.clear=field.dataset.clear==="true"?"false":"true";
       clear.textContent=field.dataset.clear==="true"?"Keys will be cleared on Save · Undo":"Clear saved keys";
-    });card.append(clear);
+    });clear.disabled=p.keySource==="file";card.append(clear);
     card.append(inputField("API base URL",`${id}-url`,p.baseURL));
     const models=document.createElement("div");models.className="model-grid";
     models.append(inputField("Text models (in fallback order)",`${id}-text`,p.textModels.join(",")));
@@ -256,6 +271,15 @@ $("questionBox").addEventListener("keydown",event => {
 $("listenButton").addEventListener("click",toggleListening);
 $("screenButton").addEventListener("click",readScreen);
 $("settingsButton").addEventListener("click",openSettings);
+$("reloadKeys").addEventListener("click",async()=>{
+  $("reloadKeys").disabled=true;
+  try {
+    const result=await api.reloadKeys();
+    if(!result.ok){$("settingsStatus").textContent=result.error;return;}
+    $("settingsDialog").close();await openSettings();
+    if(!result.settings.order.some(id=>result.settings.providers[id]?.keyCount))$("settingsStatus").textContent="No keys found. Choose Get API key, sign into your own account, paste the key, and Save settings.";
+  }finally{$("reloadKeys").disabled=false;}
+});
 $("closeSettings").addEventListener("click",() => $("settingsDialog").close());
 $("saveSettings").addEventListener("click",saveSettings);
 $("cancelButton").addEventListener("click",cancelAll);
@@ -274,6 +298,8 @@ document.addEventListener("keydown",event => {
 api.onAction(action => {
   if (action==="toggle-listening") toggleListening();
   else if (action==="stop-listening") capture.stop(true);
+  else if (action==="pause-work") cancelAll();
+  else if (action==="refresh-keys") refreshSettings().then(()=>{if(!state.settings?.order.some(id=>state.settings.providers[id]?.keyCount))openSettings();});
   else if (action==="screen-answer") readScreen();
   else if (action==="toggle-theme") toggleTheme();
 });
@@ -281,5 +307,5 @@ api.onStatus(detail => {if (detail.id===state.activeId || state.audioIds.has(det
 navigator.mediaDevices?.addEventListener("devicechange",refreshDevices);
 window.addEventListener("beforeunload",() => capture.stop(true));
 if (localStorage.getItem("theme")==="light") document.body.classList.add("light");
-refreshSettings().catch(() => status("Could not load settings. Restart the app.",true));
+refreshSettings().then(()=>{if(!state.settings?.order.some(id=>state.settings.providers[id]?.keyCount))openSettings();}).catch(() => status("Could not load settings. Restart the app.",true));
 refreshDevices();

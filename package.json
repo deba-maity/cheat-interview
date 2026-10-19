@@ -49,6 +49,7 @@
     },
     "win": {
       "target": ["nsis", "portable"],
+      "electronLanguages": ["en-US"],
       "icon": "assets/icon.ico"
     },
     "portable": {

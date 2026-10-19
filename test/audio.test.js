@@ -7,7 +7,7 @@ const path=require("node:path");
 const settle=() => new Promise(resolve => setImmediate(resolve));
 
 function fixture({systemAudio=true,micError=false,slowResume=false}={}) {
-  let clock=0,level=.1;
+  let clock=0,level=.1,intervalMs;
   const recorders=[],streams=[],clips=[],errors=[],notices=[],contexts=[];
   class Track {constructor(kind){this.kind=kind;this.stopped=false;}stop(){this.stopped=true;}}
   class Stream {
@@ -16,12 +16,12 @@ function fixture({systemAudio=true,micError=false,slowResume=false}={}) {
   }
   class Recorder {
     static isTypeSupported(){return true;}
-    constructor(stream,opts){this.stream=stream;this.mimeType=opts?.mimeType || "audio/webm";recorders.push(this);}
-    start(){this.state="recording";}
+    constructor(stream,opts){this.options=opts;this.stream=stream;this.mimeType=opts?.mimeType || "audio/webm";recorders.push(this);}
+    start(timeslice){this.timeslice=timeslice;this.state="recording";}
     stop(){this.state="inactive";queueMicrotask(() => {this.ondataavailable?.({data:new Blob([`header-${recorders.indexOf(this)}:${"a".repeat(300)}`])});this.onstop?.();});}
   }
   class AudioContext {
-    constructor(){contexts.push(this);}
+    constructor(options){this.options=options;contexts.push(this);}
     resume(){if (slowResume && contexts.length===1) return new Promise(resolve => {this.resumeResolve=resolve;});return Promise.resolve();}
     close(){this.closed=true;return Promise.resolve();}
     createMediaStreamDestination(){return {stream:new Stream()};}
@@ -32,10 +32,11 @@ function fixture({systemAudio=true,micError=false,slowResume=false}={}) {
     getUserMedia:async () => {if (micError) {const e=Error("Denied");e.name="NotAllowedError";throw e;}return new Stream();},
     getDisplayMedia:async () => new Stream(systemAudio?[new Track("audio"),new Track("video")]:[new Track("video")]),
   }},MediaRecorder:Recorder,MediaStream:Stream,Blob,performance:{now:() => clock},
-    Float32Array,setInterval:() => 1,clearInterval(){},queueMicrotask};
+    Float32Array,setInterval:(_fn,ms) => {intervalMs=ms;return 1;},clearInterval(){},queueMicrotask};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,"../audio-capture.js"),"utf8"),sandbox);
   const capture=new sandbox.window.AudioCapture({onClip:clip => clips.push(clip),onError:e => errors.push(e),onNotice:n => notices.push(n)});
   return {capture,recorders,streams,clips,errors,notices,contexts,
+    get intervalMs(){return intervalMs;},
     tick:(ms,rms=.1) => {clock+=ms;level=rms;capture.monitor();}};
 }
 
@@ -49,6 +50,26 @@ test("speech clips finalize after silence and each clip is its own recorder sess
   f.tick(1300,0);await settle();
   assert.equal(f.clips.length,2);assert.match(await f.clips[1].text(),/^header-1:/);
   f.capture.stop(true);await settle();
+});
+
+test("meeting capture stops the unused video track while retaining audio",async()=>{
+  const f=fixture();await f.capture.start({source:"system"});
+  const tracks=f.streams.flatMap(s=>s.getTracks());
+  assert.ok(tracks.some(t=>t.kind==="video"&&t.stopped));
+  assert.ok(tracks.some(t=>t.kind==="audio"&&!t.stopped));
+  assert.equal(f.intervalMs,150);assert.equal(f.capture.samples.length,512);
+  assert.equal(f.contexts[0].options.sampleRate,16000);
+  assert.equal(f.recorders[0].options.audioBitsPerSecond,24000);
+  assert.equal(f.recorders[0].timeslice,undefined);
+  f.capture.stop(true);await settle();assert.ok(tracks.every(t=>t.stopped));
+});
+
+test("ten minutes of continuous speech stays clip-bounded with the lighter monitor",async()=>{
+  const f=fixture();await f.capture.start();
+  for(let elapsed=0;elapsed<600000;elapsed+=150){f.tick(150);await settle();}
+  assert.ok(f.clips.length>=20&&f.clips.length<=22);
+  assert.ok(f.recorders.every(r=>r.options.audioBitsPerSecond===24000));
+  f.capture.stop(true);await settle();assert.equal(f.capture.phase,"idle");assert.equal(f.capture.context,null);
 });
 test("silent clips are discarded instead of uploading them",async () => {
   const f=fixture();await f.capture.start();f.tick(29000,0);await settle();

@@ -1,19 +1,39 @@
 "use strict";
 
 const { app, BrowserWindow, ipcMain, globalShortcut, desktopCapturer, clipboard,
-  screen, session, safeStorage, Tray, Menu, nativeImage } = require("electron");
+  screen, session, safeStorage, Tray, Menu, nativeImage, shell, powerMonitor } = require("electron");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { ConfigStore } = require("./lib/config");
 const { AIService, AIError } = require("./lib/ai");
+const {OCRCache}=require("./lib/ocr-cache");
+const {loadKeySource}=require("./lib/key-source");
+const {KEY_PAGES}=require("./lib/providers");
 
-if (!app.isPackaged) require("dotenv").config({path:path.join(__dirname,".env"),quiet:true});
 const indexURL=pathToFileURL(path.join(__dirname,"index.html")).href;
-let window, tray, store, ai, ocrWorkerPromise;
+let window, tray, store, ai;
 let corner=0;
 const requests=new Map();
 const shortcutFailures=[];
 let selectedDisplay="";
+function keySource() {
+  return loadKeySource({directories:process.env.STEALTH_TEST_PROFILE?[process.env.STEALTH_TEST_PROFILE]:app.isPackaged
+    ? [process.env.PORTABLE_EXECUTABLE_DIR,path.dirname(process.execPath),app.getPath("userData")]
+    : [__dirname]});
+}
+const ocrCache=new OCRCache(async()=>{
+  const {createWorker}=require("tesseract.js");
+  return createWorker("eng",1,{
+    langPath:app.isPackaged?path.join(process.resourcesPath,"lang"):__dirname,
+    ...(app.isPackaged?{workerPath:path.join(process.resourcesPath,"app.asar.unpacked","node_modules","tesseract.js","src","worker-script","node","index.js")}:{}),
+    gzip:false,cachePath:app.getPath("userData"),
+  });
+});
+function stopWork() {
+  notifyAction("pause-work");
+  for (const controller of requests.values()) controller.abort();
+  ocrCache.dispose();
+}
 
 function notifyAction(action) {
   if (!window || window.isDestroyed()) return;
@@ -66,26 +86,15 @@ async function task(id, callback) {
   finally { requests.delete(id); }
 }
 
-async function captureScreen(displayId=selectedDisplay) {
-  const sources=await desktopCapturer.getSources({types:["screen"],thumbnailSize:{width:2560,height:1600}});
+async function captureScreen(displayId=selectedDisplay,detailed=false) {
+  const sources=await desktopCapturer.getSources({types:["screen"],thumbnailSize:detailed?{width:2560,height:1600}:{width:1600,height:1000}});
   const source=sources.find(s => s.display_id===String(displayId)) || sources[0];
   if (!source || source.thumbnail.isEmpty()) throw new Error("Screen capture is unavailable. Check screen-recording permissions.");
-  return {source,image:source.thumbnail.toDataURL(),buffer:source.thumbnail.toPNG()};
+  return {source,image:`data:image/jpeg;base64,${source.thumbnail.toJPEG(80).toString("base64")}`};
 }
 async function ocr(buffer, signal) {
   signal?.throwIfAborted();
-  if (!ocrWorkerPromise) {
-    const { createWorker }=require("tesseract.js");
-    ocrWorkerPromise=createWorker("eng",1,{
-      langPath:app.isPackaged?path.join(process.resourcesPath,"lang"):__dirname,
-      ...(app.isPackaged?{workerPath:path.join(process.resourcesPath,"app.asar.unpacked","node_modules","tesseract.js","src","worker-script","node","index.js")}:{}),
-      gzip:false,cachePath:app.getPath("userData"),
-    })
-      .catch(error => {ocrWorkerPromise=null; throw error;});
-  }
-  const worker=await ocrWorkerPromise;
-  signal?.throwIfAborted();
-  const {data}=await worker.recognize(buffer);
+  const {data}=await ocrCache.recognize(buffer,signal);
   signal?.throwIfAborted();
   const text=data.text?.trim();
   if (!text) throw new AIError("No readable text was found. Select the display containing the question or configure a vision provider.","NO_SCREEN_TEXT");
@@ -93,7 +102,14 @@ async function ocr(buffer, signal) {
 }
 
 function registerIPC() {
-  handle("get-settings",async () => ({settings:store.public(),displays:screen.getAllDisplays().map((d,i) => ({id:String(d.id),label:d.label || `Display ${i+1}`})),shortcutFailures}));
+  handle("get-settings",async () => ({settings:store.public(),health:ai.health(),displays:screen.getAllDisplays().map((d,i) => ({id:String(d.id),label:d.label || `Display ${i+1}`})),shortcutFailures}));
+  handle("reload-keys",async()=>{
+    const settings=store.reloadKeys(keySource());ai.resetHealth();return {settings};
+  });
+  handle("open-key-page",async({provider}={})=>{
+    if(!Object.hasOwn(KEY_PAGES,provider))throw new Error("Unknown provider.");
+    await shell.openExternal(KEY_PAGES[provider]);return {};
+  });
   handle("save-settings",async input => {
     const settings=store.save(input);
     ai.resetHealth();
@@ -108,9 +124,11 @@ function registerIPC() {
     return task(id,options => ai.transcribe(audio,{mimeType,language,...options}));
   });
   handle("screen-answer",async payload => {
-    const {id,question,mode,language,history,displayId,meetingContext}=payload || {};
+    const {id,question,mode,language,history,displayId,meetingContext,detailedScreen}=payload || {};
     return task(id,async options => {
-      const captured=await captureScreen(displayId);
+      const config=store.get();
+      if(!config.order.some(id=>config.providers[id]?.keys.length))throw new AIError("No provider key was found on this computer. Open Settings and choose Get API key, or reload your local .env.","NOT_CONFIGURED");
+      const captured=await captureScreen(displayId,detailedScreen===true);
       if (options.signal.aborted) throw new AIError("Request cancelled.","CANCELLED");
       let visionError;
       try {
@@ -121,7 +139,7 @@ function registerIPC() {
         visionError=error;
       }
       options.onStatus({message:"Vision unavailable. Reading screen text locally…"});
-      const extracted=await ocr(captured.buffer,options.signal);
+      const extracted=await ocr(captured.source.thumbnail.toPNG(),options.signal);
       const result=await ai.answer(`${question}\n\nScreen text (OCR; may contain errors):\n${extracted}`,
         {mode,language,history,meetingContext,...options});
       return {...result,source:"ocr",display:captured.source.name,usedFallback:true,
@@ -129,7 +147,7 @@ function registerIPC() {
     });
   });
   handle("cancel-request",async ({id}={}) => {requests.get(id)?.abort(); return {};});
-  handle("cancel-all",async () => {for (const controller of requests.values()) controller.abort(); return {};});
+  handle("cancel-all",async () => {for (const controller of requests.values()) controller.abort();ocrCache.dispose();return {};});
   handle("set-display",async ({displayId}={}) => {
     if (!screen.getAllDisplays().some(d => String(d.id)===String(displayId))) throw new Error("Display is no longer available.");
     selectedDisplay=String(displayId); return {};
@@ -172,9 +190,11 @@ function createWindow() {
     width:Math.min(900,workArea.width),height:Math.min(750,workArea.height),minWidth:560,minHeight:460,
     title:"Stealth Assistant",frame:false,backgroundColor:"#151B22",alwaysOnTop:true,skipTaskbar:true,show:false,
     webPreferences:{preload:path.join(__dirname,"preload.js"),contextIsolation:true,nodeIntegration:false,
-      sandbox:true,backgroundThrottling:false,webSecurity:true},
+      sandbox:true,backgroundThrottling:true,webSecurity:true},
   });
   window.setContentProtection(true);
+  window.on("hide",stopWork);
+  window.on("minimize",stopWork);
   window.webContents.setWindowOpenHandler(() => ({action:"deny"}));
   window.webContents.on("will-navigate",event => event.preventDefault());
   window.on("closed",() => {window=null; app.quit();});
@@ -192,9 +212,13 @@ function createWindow() {
 
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on("second-instance",reveal);
+  app.on("second-instance",()=>{
+    if(store){store.reloadKeys(keySource());ai.resetHealth();notifyAction("refresh-keys");}
+    reveal();
+  });
   app.whenReady().then(() => {
-    store=new ConfigStore({directory:app.getPath("userData"),encryption:safeStorage});
+    const source=keySource();
+    store=new ConfigStore({directory:app.getPath("userData"),encryption:safeStorage,env:source.env,keySource:source});
     ai=new AIService(() => store.get());
     session.defaultSession.setPermissionCheckHandler((contents,permission) =>
       contents===window?.webContents && ["media","display-capture"].includes(permission));
@@ -206,19 +230,21 @@ else {
     session.defaultSession.setDisplayMediaRequestHandler(async (request,callback) => {
       if (request.frame!==window?.webContents.mainFrame || request.frame?.url!==indexURL || !request.audioRequested) return callback({});
       try {
-        const sources=await desktopCapturer.getSources({types:["screen"],thumbnailSize:{width:1,height:1}});
+        const sources=await desktopCapturer.getSources({types:["screen"],thumbnailSize:{width:0,height:0}});
         const source=sources.find(s => s.display_id===selectedDisplay) || sources[0];
         if (!source) return callback({});
         callback({video:source,audio:"loopback"});
       } catch {callback({});}
     });
     registerIPC(); createWindow(); registerShortcuts();
+    powerMonitor.on("suspend",stopWork);
+    powerMonitor.on("lock-screen",stopWork);
   }).catch(error => {console.error("Startup failed:",error.message); app.quit();});
 }
 app.on("before-quit",() => {
   for (const controller of requests.values()) controller.abort();
   globalShortcut.unregisterAll();
   tray?.destroy();
-  if (ocrWorkerPromise) ocrWorkerPromise.then(worker => worker.terminate()).catch(() => {});
+  ocrCache.dispose();
 });
 app.on("window-all-closed",() => app.quit());
